@@ -6,8 +6,10 @@
 //! `AudioComponent.h` (Audio Component Services)
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::abi::GuestFunction;
+use crate::audio::openal::al_types::ALuint;
 use crate::dyld::FunctionExports;
 use crate::environment::Environment;
 use crate::export_c_func;
@@ -37,9 +39,12 @@ impl State {
 #[derive(Clone)]
 pub struct AudioComponentInstanceHostObject {
     pub started: bool,
-    pub _global_stream_format: AudioStreamBasicDescription,
-    pub _output_stream_format: Option<AudioStreamBasicDescription>,
-    pub _render_callback: Option<AURenderCallbackStruct>,
+    pub global_stream_format: AudioStreamBasicDescription,
+    pub input_stream_format: Option<AudioStreamBasicDescription>,
+    pub output_stream_format: Option<AudioStreamBasicDescription>,
+    pub render_callback: Option<AURenderCallbackStruct>,
+    pub last_render_time: Option<Instant>,
+    pub al_source: Option<ALuint>,
 }
 impl Default for AudioComponentInstanceHostObject {
     fn default() -> Self {
@@ -47,7 +52,7 @@ impl Default for AudioComponentInstanceHostObject {
         // through a test app built targetting iOS 2.0
         AudioComponentInstanceHostObject {
             started: false,
-            _global_stream_format: AudioStreamBasicDescription {
+            global_stream_format: AudioStreamBasicDescription {
                 sample_rate: 44100.0,
                 format_id: kAudioFormatLinearPCM,
                 format_flags: kAudioFormatFlagIsFloat
@@ -61,13 +66,16 @@ impl Default for AudioComponentInstanceHostObject {
                 bits_per_channel: 32,
                 _reserved: 0,
             },
-            _render_callback: None,
-            _output_stream_format: None,
+            input_stream_format: None,
+            output_stream_format: None,
+            render_callback: None,
+            last_render_time: None,
+            al_source: None,
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C, packed)]
 #[allow(dead_code)]
 pub struct AURenderCallbackStruct {
@@ -82,7 +90,6 @@ unsafe impl SafeRead for OpaqueAudioComponent {}
 
 type AudioComponent = MutPtr<OpaqueAudioComponent>;
 
-#[allow(dead_code)]
 pub type AURenderCallback = GuestFunction;
 
 #[repr(C, packed)]

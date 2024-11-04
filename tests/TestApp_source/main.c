@@ -82,17 +82,52 @@ char *getcwd(char *, size_t);
 int usleep(useconds_t);
 
 // <fcntl.h>
+#define O_RDONLY 0x00000000
+#define O_WRONLY 0x00000001
+#define O_RDWR 0x00000002
 #define O_CREAT 0x00000200
+
+int open(const char *, int, ...);
+int close(int);
 
 // <pthread.h>
 typedef struct opaque_pthread_t opaque_pthread_t;
 typedef struct opaque_pthread_t *__pthread_t;
 typedef __pthread_t pthread_t;
+
 typedef struct opaque_pthread_attr_t opaque_pthread_attr_t;
 typedef struct opaque_pthread_attr_t *__pthread_attr_t;
 typedef __pthread_attr_t pthread_attr_t;
+
+struct _opaque_pthread_mutex_t {
+  long __sig;
+  char __opaque[40];
+};
+typedef struct _opaque_pthread_mutex_t __pthread_mutex_t;
+typedef __pthread_mutex_t pthread_mutex_t;
+
+typedef struct opaque_pthread_mutexattr_t opaque_pthread_mutexattr_t;
+typedef struct opaque_pthread_mutexattr_t *__pthread_mutexattr_t;
+typedef __pthread_mutexattr_t pthread_mutexattr_t;
+
+typedef struct opaque_pthread_cond_t opaque_pthread_cond_t;
+typedef struct opaque_pthread_cond_t *__pthread_cond_t;
+typedef __pthread_cond_t pthread_cond_t;
+
+typedef struct opaque_pthread_condattr_t opaque_pthread_condattr_t;
+typedef struct opaque_pthread_condattr_t *__pthread_condattr_t;
+typedef __pthread_condattr_t pthread_condattr_t;
+
 int pthread_create(pthread_t *, const pthread_attr_t *, void *(*)(void *),
                    void *);
+
+int pthread_cond_init(pthread_cond_t *, const pthread_condattr_t *);
+int pthread_cond_signal(pthread_cond_t *);
+int pthread_cond_wait(pthread_cond_t *, pthread_mutex_t *);
+
+int pthread_mutex_init(pthread_mutex_t *, const pthread_mutexattr_t *);
+int pthread_mutex_lock(pthread_mutex_t *);
+int pthread_mutex_unlock(pthread_mutex_t *);
 
 // <semaphore.h>
 #define SEM_FAILED ((sem_t *)-1)
@@ -125,12 +160,15 @@ struct dirent {
 DIR *opendir(const char *);
 struct dirent *readdir(DIR *);
 int closedir(DIR *);
+int scandir(const char *, struct dirent ***, int (*)(struct dirent *),
+            int (*)(const void *, const void *));
 
 // <wchar.h>
 int swscanf(const wchar_t *, const wchar_t *, ...);
 
 // `CFBase.h`
 
+typedef const void *CFTypeRef;
 typedef const struct _CFAllocator *CFAllocatorRef;
 typedef unsigned int CFStringEncoding;
 typedef signed long CFIndex;
@@ -142,6 +180,8 @@ typedef unsigned long CFOptionFlags;
 typedef const struct _CFDictionary *CFDictionaryRef;
 typedef const struct _CFString *CFStringRef;
 typedef const struct _CFString *CFMutableStringRef;
+
+void CFRelease(CFTypeRef cf);
 
 // `CFString.h`
 
@@ -157,6 +197,26 @@ CFComparisonResult CFStringCompare(CFStringRef a, CFStringRef b,
                                    CFStringCompareFlags flags);
 CFRange CFStringFind(CFStringRef theString, CFStringRef stringToFind,
                      CFOptionFlags compareOptions);
+
+// `CFString.h`
+
+typedef const struct _CFDictionary *CFMutableDictionaryRef;
+
+CFMutableDictionaryRef CFDictionaryCreateMutable(
+    CFAllocatorRef allocator, CFIndex capacity,
+    const void *keyCallBacks,  // TODO: CFDictionaryKeyCallBacks
+    const void *valueCallBacks // TODO: CFDictionaryValueCallBacks
+);
+void CFDictionaryAddValue(CFMutableDictionaryRef dict, const void *key,
+                          const void *value);
+void CFDictionarySetValue(CFMutableDictionaryRef dict, const void *key,
+                          const void *value);
+void CFDictionaryRemoveValue(CFMutableDictionaryRef dict, const void *key);
+void CFDictionaryRemoveAllValues(CFMutableDictionaryRef dict);
+const void *CFDictionaryGetValue(CFDictionaryRef dict, const void *key);
+CFIndex CFDictionaryGetCount(CFDictionaryRef dict);
+void CFDictionaryGetKeysAndValues(CFDictionaryRef dict, const void **keys,
+                                  const void **values);
 
 // === Main code ===
 
@@ -211,6 +271,10 @@ int test_vsnprintf() {
   // Test %s NULL
   str = str_format("%s", NULL);
   res += !!strcmp(str, "(null)");
+  free(str);
+  // Test % without a specifier
+  str = str_format("abc%");
+  res += !!strcmp(str, "abc");
   free(str);
   // Test %x
   str = str_format("%x", 2042);
@@ -302,6 +366,14 @@ int test_vsnprintf() {
                    -10.12345, -10.12345, 8, -10.12345, 8, -10.12345);
   res += !!strcmp(str, "-10.1235|-10.1235|-10.1235|-1e+01|  -1e+01|-10.1|   "
                        "-10.1|-00010.1|-10.1235|-10.1235");
+  free(str);
+  // Test %g with trailing zeros
+  str = str_format("%.14g", 1.0);
+  res += !!strcmp(str, "1");
+  free(str);
+  // Test %g with a precision argument
+  str = str_format("%.*g", 4, 10.234);
+  res += !!strcmp(str, "10.23");
   free(str);
   // Test length modifiers
   str = str_format("%d %ld %lld %u %lu %llu", 10, 100, 4294967296, 10, 100,
@@ -707,6 +779,42 @@ int test_sem() {
   return 0;
 }
 
+int done = 0;
+pthread_mutex_t m;
+pthread_cond_t c;
+
+void thr_exit() {
+  pthread_mutex_lock(&m);
+  done = 1;
+  pthread_cond_signal(&c);
+  pthread_mutex_unlock(&m);
+}
+
+void *child(void *arg) {
+  thr_exit();
+  return NULL;
+}
+
+void thr_join() {
+  pthread_mutex_lock(&m);
+  while (done == 0) {
+    pthread_cond_wait(&c, &m);
+  }
+  pthread_mutex_unlock(&m);
+}
+
+int test_cond_var() {
+  pthread_t p;
+
+  pthread_mutex_init(&m, NULL);
+  pthread_cond_init(&c, NULL);
+
+  pthread_create(&p, NULL, child, NULL);
+  thr_join();
+
+  return done == 1 ? 0 : -1;
+}
+
 int test_strncpy() {
   char *src = "test\0abcd";
   char dst[10];
@@ -854,6 +962,33 @@ int test_dirent() {
     }
   }
   closedir(dirp);
+  for (int i = 0; i < total; i++) {
+    if (counts[i] != 0) {
+      return -2;
+    }
+  }
+  return 0;
+}
+
+int test_scandir() {
+  struct dirent **namelist;
+  int n = scandir(path_test_app, &namelist, NULL, NULL);
+  if (n < 0) {
+    return -1;
+  }
+  char *contents[] = {"TestApp", "Info.plist", "PkgInfo"};
+  int counts[] = {1, 1, 1};
+  int total = sizeof(contents) / sizeof(char *);
+  while (n--) {
+    for (int i = 0; i < total; i++) {
+      if (strcmp(contents[i], namelist[n]->d_name) == 0) {
+        counts[i]--;
+        break;
+      }
+    }
+    free(namelist[n]);
+  }
+  free(namelist);
   for (int i = 0; i < total; i++) {
     if (counts[i] != 0) {
       return -2;
@@ -1011,6 +1146,116 @@ int test_fwrite() {
   return 0;
 }
 
+int test_open() {
+  int fd;
+  // Test opening directories
+  fd = open("/usr", O_RDONLY);
+  if (fd == -1) {
+    return -1;
+  }
+  close(fd);
+
+  fd = open("/usr", O_WRONLY);
+  if (fd != -1) {
+    close(fd);
+    return -2;
+  }
+
+  fd = open("/usr", O_RDWR);
+  if (fd != -1) {
+    close(fd);
+    return -3;
+  }
+
+  return 0;
+}
+
+int test_CFMutableDictionary() {
+  CFMutableDictionaryRef dict = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
+  if (dict == NULL) {
+    return -1;
+  }
+
+  const char *key = "Key";
+  const char *value = "Value";
+  CFDictionaryAddValue(dict, key, value);
+  const void *retrievedValue = CFDictionaryGetValue(dict, key);
+  if (retrievedValue != value) {
+    CFRelease(dict);
+    return -2;
+  }
+
+  const char *valueNew = "NewValue";
+  CFDictionaryAddValue(dict, key, valueNew);
+  retrievedValue = CFDictionaryGetValue(dict, key);
+  if (retrievedValue != value) {
+    CFRelease(dict);
+    return -3;
+  }
+
+  CFDictionarySetValue(dict, key, NULL);
+  retrievedValue = CFDictionaryGetValue(dict, key);
+  if (retrievedValue != NULL) {
+    CFRelease(dict);
+    return -4;
+  }
+
+  CFDictionarySetValue(dict, key, valueNew);
+  retrievedValue = CFDictionaryGetValue(dict, key);
+  if (retrievedValue != valueNew) {
+    CFRelease(dict);
+    return -5;
+  }
+
+  CFDictionaryRemoveValue(dict, key);
+  retrievedValue = CFDictionaryGetValue(dict, key);
+  if (retrievedValue != NULL) {
+    CFRelease(dict);
+    return -6;
+  }
+
+  CFDictionaryAddValue(dict, key, value);
+  retrievedValue = CFDictionaryGetValue(dict, key);
+  if (retrievedValue != value) {
+    CFRelease(dict);
+    return -7;
+  }
+
+  CFIndex count = CFDictionaryGetCount(dict);
+  if (count != 1) {
+    CFRelease(dict);
+    return -8;
+  }
+
+  const void **keys = malloc(sizeof(char *) * count);
+  const void **values = malloc(sizeof(char *) * count);
+  CFDictionaryGetKeysAndValues(dict, keys, values);
+  if (keys[0] != key || values[0] != value) {
+    free(keys);
+    free(values);
+    CFRelease(dict);
+    return -9;
+  }
+  free(keys);
+  free(values);
+
+  CFDictionaryRemoveAllValues(dict);
+  count = CFDictionaryGetCount(dict);
+  if (count != 0) {
+    CFRelease(dict);
+    return -10;
+  }
+
+  count = CFDictionaryGetCount(dict);
+  if (count != 0) {
+    CFRelease(dict);
+    return -11;
+  }
+
+  CFRelease(dict);
+  return 0;
+}
+
 // clang-format off
 #define FUNC_DEF(func)                                                         \
   { &func, #func }
@@ -1036,6 +1281,7 @@ struct {
     FUNC_DEF(test_strtoul),
     FUNC_DEF(test_strtol),
     FUNC_DEF(test_dirent),
+    FUNC_DEF(test_scandir),
     FUNC_DEF(test_strchr),
     FUNC_DEF(test_swprintf),
     FUNC_DEF(test_realpath),
@@ -1044,6 +1290,9 @@ struct {
     FUNC_DEF(test_mbstowcs),
     FUNC_DEF(test_CFMutableString),
     FUNC_DEF(test_fwrite),
+    FUNC_DEF(test_open),
+    FUNC_DEF(test_cond_var),
+    FUNC_DEF(test_CFMutableDictionary),
 };
 // clang-format on
 

@@ -12,13 +12,17 @@ pub mod ui_alert_view;
 pub mod ui_control;
 pub mod ui_image_view;
 pub mod ui_label;
+pub mod ui_picker_view;
+pub mod ui_scroll_view;
 pub mod ui_window;
 
 use super::ui_graphics::{UIGraphicsPopContext, UIGraphicsPushContext};
-use crate::frameworks::core_graphics::cg_affine_transform::CGAffineTransform;
+use crate::frameworks::core_graphics::cg_affine_transform::{
+    CGAffineTransform, CGAffineTransformIdentity,
+};
 use crate::frameworks::core_graphics::cg_color::CGColorRef;
 use crate::frameworks::core_graphics::cg_context::{CGContextClearRect, CGContextRef};
-use crate::frameworks::core_graphics::{CGFloat, CGPoint, CGRect};
+use crate::frameworks::core_graphics::{CGFloat, CGPoint, CGRect, CGSize};
 use crate::frameworks::foundation::ns_string::get_static_str;
 use crate::frameworks::foundation::{ns_array, NSInteger, NSUInteger};
 use crate::objc::{
@@ -41,6 +45,8 @@ pub(super) struct UIViewHostObject {
     subviews: Vec<id>,
     /// The superview. This is a weak reference.
     superview: id,
+    /// The view controller that controls this view. This is a weak reference
+    view_controller: id,
     clears_context_before_drawing: bool,
     user_interaction_enabled: bool,
     multiple_touch_enabled: bool,
@@ -54,11 +60,17 @@ impl Default for UIViewHostObject {
             layer: nil,
             subviews: Vec::new(),
             superview: nil,
+            view_controller: nil,
             clears_context_before_drawing: true,
             user_interaction_enabled: true,
             multiple_touch_enabled: false,
         }
     }
+}
+
+pub fn set_view_controller(env: &mut Environment, view: id, controller: id) {
+    let host_obj = env.objc.borrow_mut::<UIViewHostObject>(view);
+    host_obj.view_controller = controller;
 }
 
 /// Shared parts of `initWithCoder:` and `initWithFrame:`. These can't call
@@ -196,6 +208,23 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.borrow::<UIViewHostObject>(this).superview
 }
 
+- (id)window {
+    // Looks up window in the superview hierarchy
+    // TODO: cache the result somehow?
+    let mut window: id = env.objc.borrow::<UIViewHostObject>(this).superview;
+    let window_class = env.objc.get_known_class("UIWindow", &mut env.mem);
+    while window != nil {
+        let current_class: Class = msg![env; window class];
+        log_dbg!("maybe window {:?} curr class {}", window, env.objc.get_class_name(current_class));
+        if env.objc.class_is_subclass_of(current_class, window_class) {
+            break;
+        }
+        window = env.objc.borrow::<UIViewHostObject>(window).superview;
+    }
+    log_dbg!("view {:?} has window {:?}", this, window);
+    window
+}
+
 - (id)subviews {
     let views = env.objc.borrow::<UIViewHostObject>(this).subviews.clone();
     for view in &views {
@@ -279,12 +308,14 @@ pub const CLASSES: ClassExports = objc_classes! {
         layer,
         superview,
         subviews,
+        view_controller,
         clears_context_before_drawing: _,
         user_interaction_enabled: _,
         multiple_touch_enabled: _,
     } = std::mem::take(env.objc.borrow_mut(this));
 
     release(env, layer);
+    assert!(view_controller == nil);
     assert!(superview == nil);
     for subview in subviews {
         env.objc.borrow_mut::<UIViewHostObject>(subview).superview = nil;
@@ -376,6 +407,9 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; layer setFrame:frame]
 }
 
+- (CGAffineTransform)transform {
+    CGAffineTransformIdentity
+}
 - (())setTransform:(CGAffineTransform)transform {
     log!("TODO: [{:?} setTransform:{:?}]", this, transform);
 }
@@ -427,7 +461,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     for subview in subviews.into_iter().rev() { // later views are on top
         let hidden: bool = msg![env; subview isHidden];
         let alpha: CGFloat = msg![env; subview alpha];
-        let interactible: bool = msg![env; this isUserInteractionEnabled];
+        let interactible: bool = msg![env; subview isUserInteractionEnabled];
         if hidden || alpha < 0.01 || !interactible {
            continue;
         }
@@ -465,11 +499,29 @@ pub const CLASSES: ClassExports = objc_classes! {
     false
 }
 
+// UIResponder implementation
+// From the Apple UIView docs regarding [UIResponder nextResponder]:
+// "UIView implements this method and returns the UIViewController object that
+//  manages it (if it has one) or its superview (if it doesn’t)."
+- (id)nextResponder {
+    let host_object = env.objc.borrow::<UIViewHostObject>(this);
+    if host_object.view_controller != nil {
+        host_object.view_controller
+    } else {
+        host_object.superview
+    }
+}
+
 // Co-ordinate space conversion
 
 - (CGPoint)convertPoint:(CGPoint)point
                fromView:(id)other { // UIView*
-    assert!(other != nil); // TODO
+    if other == nil {
+        let window: id = msg![env; this window];
+        assert!(window != nil);
+        // TODO: also assert that window is a key one?
+        return msg![env; this convertPoint:point fromView:window]
+    }
     let this_layer = env.objc.borrow::<UIViewHostObject>(this).layer;
     let other_layer = env.objc.borrow::<UIViewHostObject>(other).layer;
     msg![env; this_layer convertPoint:point fromLayer:other_layer]
@@ -477,7 +529,12 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (CGPoint)convertPoint:(CGPoint)point
                  toView:(id)other { // UIView*
-    assert!(other != nil); // TODO
+    if other == nil {
+        let window: id = msg![env; this window];
+        assert!(window != nil);
+        // TODO: also assert that window is a key one?
+        return msg![env; this convertPoint:point toView:window]
+    }
     let this_layer = env.objc.borrow::<UIViewHostObject>(this).layer;
     let other_layer = env.objc.borrow::<UIViewHostObject>(other).layer;
     msg![env; this_layer convertPoint:point toLayer:other_layer]
@@ -488,6 +545,14 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 - (())setAutoresizesSubviews:(bool)enabled {
     log!("TODO: [(UIView*){:?} setAutoresizesSubviews:{}]", this, enabled);
+}
+
+- (CGSize)sizeThatFits:(CGSize)size {
+    // default implementation, subclasses can override
+    size
+}
+- (())sizeToFit {
+    log!("TODO: [(UIView *){:?} sizeToFit]", this);
 }
 
 @end

@@ -119,7 +119,11 @@ impl<T, const MUT: bool> Default for Ptr<T, MUT> {
 
 impl<T, const MUT: bool> std::fmt::Debug for Ptr<T, MUT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#x}", self.to_bits())
+        if self.is_null() {
+            write!(f, "(null)")
+        } else {
+            write!(f, "{:#x}", self.to_bits())
+        }
     }
 }
 
@@ -257,7 +261,7 @@ impl Mem {
     pub const MAIN_THREAD_STACK_LOW_END: VAddr = 0u32.wrapping_sub(Self::MAIN_THREAD_STACK_SIZE);
 
     /// iPhone OS secondary thread stack size.
-    pub const SECONDARY_THREAD_STACK_SIZE: GuestUSize = 512 * 1024;
+    pub const SECONDARY_THREAD_DEFAULT_STACK_SIZE: GuestUSize = 512 * 1024;
 
     /// Create a fresh instance of guest memory.
     pub fn new() -> Mem {
@@ -378,6 +382,18 @@ impl Mem {
         }
         &self.bytes()[ptr.to_bits() as usize..][..count as usize]
     }
+    /// Get a slice for reading `count` bytes without a null-page check.
+    ///
+    /// This **doesn't** panic at access within the null page.
+    ///
+    /// You shall have a good reason to use it instead of [Self::bytes_at]
+    pub fn unchecked_bytes_at<const MUT: bool>(
+        &self,
+        ptr: Ptr<u8, MUT>,
+        count: GuestUSize,
+    ) -> &[u8] {
+        &self.bytes()[ptr.to_bits() as usize..][..count as usize]
+    }
     /// Get a slice for reading or writing `count` bytes. This is the basic
     /// primitive for safe read-write memory access.
     ///
@@ -409,6 +425,22 @@ impl Mem {
     {
         let size = count.checked_mul(guest_size_of::<T>()).unwrap();
         self.bytes_at(ptr.cast(), size).as_ptr().cast()
+    }
+    /// A variation of [Self::ptr_at] without a null-page check.
+    ///
+    /// This **doesn't** panic at access within the null page.
+    ///
+    /// You shall have a good reason to use it instead of [Self::ptr_at]
+    pub fn unchecked_ptr_at<T, const MUT: bool>(
+        &self,
+        ptr: Ptr<T, MUT>,
+        count: GuestUSize,
+    ) -> *const T
+    where
+        T: SafeRead,
+    {
+        let size = count.checked_mul(guest_size_of::<T>()).unwrap();
+        self.unchecked_bytes_at(ptr.cast(), size).as_ptr().cast()
     }
     /// Get a pointer for reading or writing to an array of `count` elements of
     /// type `T`. Only use this for interfacing with unsafe C-like APIs.

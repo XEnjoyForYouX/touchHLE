@@ -5,11 +5,15 @@
  */
 //! The `NSDictionary` class cluster, including `NSMutableDictionary`.
 
-use super::ns_property_list_serialization::deserialize_plist_from_file;
+use super::ns_array::ArrayHostObject;
+use super::ns_property_list_serialization::{
+    deserialize_plist_from_file, NSPropertyListBinaryFormat_v1_0,
+};
+use super::ns_string::{from_rust_string, to_rust_string};
 use super::{ns_string, ns_url, NSUInteger};
 use crate::abi::VaList;
-use crate::frameworks::foundation::ns_string::{from_rust_string, to_rust_string};
 use crate::fs::GuestPath;
+use crate::mem::{MutPtr, Ptr};
 use crate::objc::{
     autorelease, id, msg, msg_class, nil, objc_classes, release, retain, ClassExports, HostObject,
     NSZonePtr,
@@ -29,7 +33,7 @@ pub(super) struct DictionaryHostObject {
     /// hash-map, which is not ideally efficient. :)
     /// The keys are the hash values, the values are a list of key-value pairs
     /// where the keys have the same hash value.
-    map: HashMap<Hash, Vec<(id, id)>>,
+    pub(super) map: HashMap<Hash, Vec<(id, id)>>,
     pub(super) count: NSUInteger,
 }
 impl HostObject for DictionaryHostObject {}
@@ -188,10 +192,22 @@ pub const CLASSES: ClassExports = objc_classes! {
     deserialize_plist_from_file(env, &path, /* array_expected: */ false)
 }
 
-// NSCopying implementation
-- (id)copyWithZone:(NSZonePtr)_zone {
-    // TODO: override this once we have NSMutableDictionary!
-    retain(env, this)
+- (bool)writeToFile:(id)path // NSString*
+         atomically:(bool)atomically {
+    let error_desc: MutPtr<id> = Ptr::null();
+    let data: id = msg_class![env; NSPropertyListSerialization
+            dataFromPropertyList:this
+                          format:NSPropertyListBinaryFormat_v1_0
+                errorDescription:error_desc];
+    let res = msg![env; data writeToFile:path atomically:atomically];
+    log_dbg!(
+        "[(NSDictionary *){:?} writeToFile:{:?} atomically:{}] -> {}",
+        this,
+        to_rust_string(env, path),
+        atomically,
+        res
+    );
+    res
 }
 
 // TODO
@@ -220,11 +236,10 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg_class![env; _touchHLE_NSMutableDictionary allocWithZone:zone]
 }
 
-// NSCopying implementation
-- (id)copyWithZone:(NSZonePtr)_zone {
-    let entries: Vec<_> =
-        env.objc.borrow_mut::<DictionaryHostObject>(this).map.values().flatten().copied().collect();
-    dict_from_keys_and_objects(env, &entries)
++ (id)dictionaryWithCapacity:(NSUInteger)capacity {
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithCapacity:capacity];
+    autorelease(env, new)
 }
 
 @end
@@ -265,29 +280,24 @@ pub const CLASSES: ClassExports = objc_classes! {
     res
 }
 
-- (id)description {
-    // According to docs, this description should be formatted as property list.
-    // But by the same docs, it's meant to be used for debugging purposes only.
-    let desc: id = msg_class![env; NSMutableString new];
-    let prefix: id = from_rust_string(env, "{\n".to_string());
-    () = msg![env; desc appendString:prefix];
-    release(env, prefix);
-    let keys: Vec<id> = env.objc.borrow_mut::<DictionaryHostObject>(this).iter_keys().collect();
-    for key in keys {
-        let key_desc: id = msg![env; key description];
-        let value: id = msg![env; this objectForKey:key];
-        let val_desc: id = msg![env; value description];
-        // TODO: respect nesting and padding
-        let format = format!("\t{} = {};\n", to_rust_string(env, key_desc), to_rust_string(env, val_desc));
-        let format = from_rust_string(env, format);
-        () = msg![env; desc appendString:format];
-        release(env, format);
+// NSCopying implementation
+- (id)copyWithZone:(NSZonePtr)_zone {
+    retain(env, this)
+}
+
+// NSMutableCopying implementation
+- (id)mutableCopyWithZone:(NSZonePtr)_zone {
+    let mut_dict: id = msg_class![env; NSMutableDictionary alloc];
+    let host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+    for (k, v) in host_obj.map.values().flatten() {
+        () = msg![env; mut_dict setObject:(*v) forKey:(*k)];
     }
-    let suffix: id = from_rust_string(env, "}".to_string());
-    () = msg![env; desc appendString:suffix];
-    release(env, suffix);
-    // TODO: return an immutable copy once supported
-    autorelease(env, desc)
+    *env.objc.borrow_mut(this) = host_obj;
+    mut_dict
+}
+
+- (id)description {
+    build_description(env, this)
 }
 
 @end
@@ -316,6 +326,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
+- (id)initWithCapacity:(NSUInteger)_capacity {
+    // TODO: capacity
+    msg![env; this init]
+}
+
 // TODO: enumeration, more init methods, etc
 
 - (NSUInteger)count {
@@ -328,6 +343,24 @@ pub const CLASSES: ClassExports = objc_classes! {
     res
 }
 
+// NSCopying implementation
+- (id)copyWithZone:(NSZonePtr)_zone {
+    let entries: Vec<_> =
+        env.objc.borrow_mut::<DictionaryHostObject>(this).map.values().flatten().copied().collect();
+    dict_from_keys_and_objects(env, &entries)
+}
+
+// NSMutableCopying implementation
+- (id)mutableCopyWithZone:(NSZonePtr)_zone {
+    let mut_dict: id = msg_class![env; NSMutableDictionary alloc];
+    let host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+    for (k, v) in host_obj.map.values().flatten() {
+        () = msg![env; mut_dict setObject:(*v) forKey:(*k)];
+    }
+    *env.objc.borrow_mut(this) = host_obj;
+    mut_dict
+}
+
 - (())setObject:(id)object
          forKey:(id)key {
     // TODO: raise NSInvalidArgumentException
@@ -335,8 +368,112 @@ pub const CLASSES: ClassExports = objc_classes! {
     // TODO: raise NSInvalidArgumentException
     assert_ne!(key, nil);
     let mut host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
-    host_obj.insert(env, object, key, /* copy_key: */ true);
+    host_obj.insert(env, key, object, /* copy_key: */ true);
     *env.objc.borrow_mut(this) = host_obj;
+}
+
+- (())addEntriesFromDictionary:(id)other { // NSDictionary *
+    let host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(other));
+    for (k, v) in host_obj.map.values().flatten() {
+        () = msg![env; this setObject:(*v) forKey:(*k)];
+    }
+    *env.objc.borrow_mut(other) = host_obj;
+}
+
+- (id)description {
+    build_description(env, this)
+}
+
+@end
+
+// Special variant for use by CFDictionary with NULL callbacks: objects aren't
+// necessarily Objective-C objects and won't be retained/released.
+// TODO: refactor with lookup/insert methods to use callbacks
+@implementation _touchHLE_NSMutableDictionary_non_retaining: _touchHLE_NSMutableDictionary
+
+- (())dealloc {
+    env.objc.dealloc_object(this, &mut env.mem)
+}
+
+- (id)initWithObjectsAndKeys:(id)_first_object, ..._dots {
+    todo!();
+}
+- (id)description {
+    todo!();
+}
+- (id)copyWithZone:(NSZonePtr)_zone {
+    todo!();
+}
+- (id)mutableCopyWithZone:(NSZonePtr)_zone {
+    todo!();
+}
+
+- (id)objectForKey:(id)key {
+    // TODO: use CFDictionaryHashCallBack
+    let hash: Hash = key.to_bits();
+    let host_obj: &mut DictionaryHostObject = env.objc.borrow_mut(this);
+    let Some(collisions) = host_obj.map.get(&hash) else {
+        return nil;
+    };
+    for &(candidate_key, value) in collisions {
+        // TODO: use CFDictionaryEqualCallBack
+        if candidate_key == key {
+            return value;
+        }
+    }
+    nil
+}
+
+- (id)valueForKey:(id)_key {
+    panic!("Unexpected call to valueForKey: for _touchHLE_NSMutableDictionary_non_retaining object {:?}", this);
+}
+
+- (())setObject:(id)value
+         forKey:(id)key {
+    assert!(!key.is_null());
+    // TODO: use CFDictionaryHashCallBack
+    let hash: Hash = key.to_bits();
+    let host_obj: &mut DictionaryHostObject = env.objc.borrow_mut(this);
+    let Some(collisions) = host_obj.map.get_mut(&hash) else {
+        host_obj.map.insert(hash, vec![(key, value)]);
+        host_obj.count += 1;
+        return;
+    };
+    for &mut (candidate_key, ref mut existing_value) in collisions.iter_mut() {
+        // TODO: use CFDictionaryEqualCallBack
+        if candidate_key == key {
+            *existing_value = value;
+            return;
+        }
+    }
+    collisions.push((key, value));
+    host_obj.count += 1;
+}
+
+- (())removeObjectForKey:(id)key {
+    assert!(!key.is_null());
+    // TODO: use CFDictionaryHashCallBack
+    let hash: Hash = key.to_bits();
+    let host_obj: &mut DictionaryHostObject = env.objc.borrow_mut(this);
+    let Some(collisions) = host_obj.map.get_mut(&hash) else {
+        return;
+    };
+    let idx = collisions.iter().position(|&(candidate_key, _)| {
+        // TODO: use CFDictionaryEqualCallBack
+        candidate_key == key
+    }).unwrap();
+    collisions.remove(idx);
+    host_obj.count -= 1;
+}
+
+- (id)allKeys {
+    let host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+    let keys: Vec<id> = host_obj.map.values().flatten().map(|&(key, _value)| key).collect();
+    *env.objc.borrow_mut(this) = host_obj;
+
+    let array: id = msg_class![env; _touchHLE_NSArray_non_retaining alloc];
+    env.objc.borrow_mut::<ArrayHostObject>(array).array = keys;
+    array
 }
 
 @end
@@ -357,4 +494,40 @@ pub fn dict_from_keys_and_objects(env: &mut Environment, keys_and_objects: &[(id
     *env.objc.borrow_mut(dict) = host_object;
 
     dict
+}
+
+/// A helper to build a description NSString
+/// for a NSDictionary or a NSMutableDictionary.
+fn build_description(env: &mut Environment, dict: id) -> id {
+    // According to docs, this description should be formatted as property list.
+    // But by the same docs, it's meant to be used for debugging purposes only.
+    let desc: id = msg_class![env; NSMutableString new];
+    let prefix: id = from_rust_string(env, "{\n".to_string());
+    () = msg![env; desc appendString:prefix];
+    release(env, prefix);
+    let keys: Vec<id> = env
+        .objc
+        .borrow_mut::<DictionaryHostObject>(dict)
+        .iter_keys()
+        .collect();
+    for key in keys {
+        let key_desc: id = msg![env; key description];
+        let value: id = msg![env; dict objectForKey:key];
+        let val_desc: id = msg![env; value description];
+        // TODO: respect nesting and padding
+        let format = format!(
+            "\t{} = {};\n",
+            to_rust_string(env, key_desc),
+            to_rust_string(env, val_desc)
+        );
+        let format = from_rust_string(env, format);
+        () = msg![env; desc appendString:format];
+        release(env, format);
+    }
+    let suffix: id = from_rust_string(env, "}".to_string());
+    () = msg![env; desc appendString:suffix];
+    release(env, suffix);
+    let desc_imm = msg![env; desc copy];
+    release(env, desc);
+    autorelease(env, desc_imm)
 }

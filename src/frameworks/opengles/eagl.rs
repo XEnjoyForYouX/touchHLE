@@ -15,6 +15,7 @@ use crate::gles::gles11_raw as gles11; // constants only
 use crate::gles::gles11_raw::types::*;
 use crate::gles::present::{present_frame, FpsCounter};
 use crate::gles::{create_gles1_ctx, gles1_on_gl2, GLES};
+use crate::mem::MutPtr;
 use crate::objc::{id, msg, nil, objc_classes, release, retain, ClassExports, HostObject};
 use crate::options::Options;
 use crate::window::Window;
@@ -62,6 +63,7 @@ pub(super) struct EAGLContextHostObject {
     renderbuffer_drawable_bindings: HashMap<GLuint, id>,
     fps_counter: Option<FpsCounter>,
     next_frame_due: Option<Instant>,
+    pub mapped_buffers: HashMap<GLuint, (MutPtr<GLvoid>, *mut GLvoid)>,
 }
 impl HostObject for EAGLContextHostObject {}
 
@@ -77,6 +79,7 @@ pub const CLASSES: ClassExports = objc_classes! {
         renderbuffer_drawable_bindings: HashMap::new(),
         fps_counter: None,
         next_frame_due: None,
+        mapped_buffers: HashMap::new(),
     });
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
@@ -111,7 +114,14 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (id)initWithAPI:(EAGLRenderingAPI)api sharegroup:(id)group {
-    assert!(api == kEAGLRenderingAPIOpenGLES1);
+    if api != kEAGLRenderingAPIOpenGLES1 {
+        log!(
+            "TODO: App requested EAGL initWithAPI:{} sharegroup:{:?}, returning nil as we only support API 1 for now",
+            api,
+            group
+        );
+        return nil;
+    }
 
     if group == nil {
         return msg![env; this initWithAPI:api];
@@ -133,7 +143,13 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (id)initWithAPI:(EAGLRenderingAPI)api {
-    assert!(api == kEAGLRenderingAPIOpenGLES1);
+    if api != kEAGLRenderingAPIOpenGLES1 {
+        log!(
+            "TODO: App requested EAGL initWithAPI:{}, returning nil as we only support API 1 for now",
+            api
+        );
+        return nil;
+    }
 
     let window = env.window.as_mut().expect("OpenGL ES is not supported in headless mode");
     let gles1_ctx = create_gles1_ctx(window, &env.options);
@@ -160,6 +176,9 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (())dealloc {
     let host_obj = env.objc.borrow_mut::<EAGLContextHostObject>(this);
+    for &(guest_buf, _host_buf) in host_obj.mapped_buffers.values() {
+        env.mem.free(guest_buf);
+    }
     let bindings = std::mem::take(&mut host_obj.renderbuffer_drawable_bindings);
     for (_renderbuffer, drawable) in bindings {
         release(env, drawable);
@@ -249,12 +268,14 @@ pub const CLASSES: ClassExports = objc_classes! {
         renderbuffer as _
     };
 
-    let &drawable = env
+    let Some(&drawable) = env
         .objc
         .borrow::<EAGLContextHostObject>(this)
         .renderbuffer_drawable_bindings
-        .get(&renderbuffer)
-        .expect("Can't present a renderbuffer not bound to a drawable!");
+        .get(&renderbuffer) else {
+        log_dbg!("Can't present a renderbuffer {:?} not bound to a drawable!", renderbuffer);
+        return false;
+    };
 
     // We're presenting to the opaque CAEAGLLayer that covers the screen.
     // We can use the fast path where we skip composition and present directly.

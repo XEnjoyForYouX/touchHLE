@@ -393,6 +393,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
+
+[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -473,6 +479,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ea3d908b0e36316caf9e9e2c4625cdde190a7e6f440d794667ed17a1855e725"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -587,9 +602,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62e48dba70095f265fdb269b99619b95d04c89e619538138383e63310b14d941"
 dependencies = [
  "lazy_static",
+ "symphonia-bundle-mp3",
  "symphonia-codec-aac",
  "symphonia-core",
  "symphonia-format-isomp4",
+ "symphonia-metadata",
+]
+
+[[package]]
+name = "symphonia-bundle-mp3"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f31d7fece546f1e6973011a9eceae948133bbd18fd3d52f6073b1e38ae6368a"
+dependencies = [
+ "bitflags",
+ "lazy_static",
+ "log",
+ "symphonia-core",
  "symphonia-metadata",
 ]
 
@@ -745,25 +774,19 @@ dependencies = [
  "gl_generator",
  "hound",
  "mach_object",
+ "md5",
  "plist",
+ "quick-xml",
  "rusttype",
  "sdl2",
  "sdl2-sys",
  "symphonia",
- "touchHLE_dr_mp3_wrapper",
  "touchHLE_dynarmic_wrapper",
  "touchHLE_gl_bindings",
  "touchHLE_openal_soft_wrapper",
  "touchHLE_pvrt_decompress_wrapper",
  "touchHLE_stb_image_wrapper",
  "zip",
-]
-
-[[package]]
-name = "touchHLE_dr_mp3_wrapper"
-version = "0.2.2"
-dependencies = [
- "cc",
 ]
 
 [[package]]

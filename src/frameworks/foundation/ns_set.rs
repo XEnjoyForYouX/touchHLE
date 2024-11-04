@@ -123,6 +123,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     ns_array::from_vec(env, objects)
 }
 
+- (id)objectEnumerator { // NSEnumerator*
+    let array: id = msg![env; this allObjects];
+    msg![env; array objectEnumerator]
+}
+
 // NSFastEnumeration implementation
 - (NSUInteger)countByEnumeratingWithState:(MutPtr<NSFastEnumerationState>)state
                                   objects:(MutPtr<id>)stackbuf
@@ -179,6 +184,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     ns_array::from_vec(env, objects)
 }
 
+- (id)objectEnumerator { // NSEnumerator*
+    let array: id = msg![env; this allObjects];
+    msg![env; array objectEnumerator]
+}
+
 // NSFastEnumeration implementation
 - (NSUInteger)countByEnumeratingWithState:(MutPtr<NSFastEnumerationState>)state
                                   objects:(MutPtr<id>)stackbuf
@@ -194,6 +204,16 @@ pub const CLASSES: ClassExports = objc_classes! {
     let mut host_obj: SetHostObject = std::mem::take(env.objc.borrow_mut(this));
     host_obj.dict.insert(env, object, null, /* copy_key: */ false);
     *env.objc.borrow_mut(this) = host_obj;
+}
+
+- (())removeAllObjects {
+    let mut old_host_obj = std::mem::replace(
+        env.objc.borrow_mut(this),
+        SetHostObject {
+            dict: Default::default(),
+        },
+    );
+    old_host_obj.dict.release(env);
 }
 
 @end

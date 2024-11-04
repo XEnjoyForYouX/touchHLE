@@ -16,6 +16,7 @@ use crate::Environment;
 
 type NSSearchPathDirectory = NSUInteger;
 const NSApplicationDirectory: NSSearchPathDirectory = 1;
+const NSLibraryDirectory: NSSearchPathDirectory = 5;
 const NSDocumentDirectory: NSSearchPathDirectory = 9;
 
 type NSSearchPathDomainMask = NSUInteger;
@@ -32,11 +33,15 @@ fn NSSearchPathForDirectoriesInDomains(
     assert!(expand_tilde);
 
     let dir = match directory {
-        // This might not actually be correct. I haven't bothered to test it
-        // because I can't think of a good reason an iPhone OS app would have to
-        // request this; Wolfenstein 3D requests it but never uses it.
-        NSApplicationDirectory => GuestPath::new(crate::fs::APPLICATIONS).to_owned(),
+        NSApplicationDirectory => {
+            // This might not actually be correct. I haven't bothered to
+            // test it because I can't think of a good reason an iPhone OS app
+            // would have to request this;
+            // Wolfenstein 3D requests it but never uses it.
+            GuestPath::new(crate::fs::APPLICATIONS).to_owned()
+        }
         NSDocumentDirectory => env.fs.home_directory().join("Documents"),
+        NSLibraryDirectory => env.fs.home_directory().join("Library"),
         _ => todo!("NSSearchPathDirectory {}", directory),
     };
     let dir = ns_string::from_rust_string(env, String::from(dir));
@@ -50,8 +55,17 @@ fn NSHomeDirectory(env: &mut Environment) -> id {
     autorelease(env, dir)
 }
 
+/// Check [crate::fs::Fs::new] for more info for
+/// how temporary folder is setup on startup
+fn NSTemporaryDirectory(env: &mut Environment) -> id {
+    let dir = env.fs.home_directory().join("tmp");
+    let dir = ns_string::from_rust_string(env, String::from(dir.as_str()));
+    autorelease(env, dir)
+}
+
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(NSHomeDirectory()),
+    export_c_func!(NSTemporaryDirectory()),
     export_c_func!(NSSearchPathForDirectoriesInDomains(_, _, _)),
 ];
 
@@ -78,6 +92,19 @@ pub const CLASSES: ClassExports = objc_classes! {
         let new: id = msg![env; this new];
         env.framework_state.foundation.ns_file_manager.default_manager = Some(new);
         new
+    }
+}
+
+- (id)currentDirectoryPath {
+    ns_string::from_rust_string(env, env.fs.working_directory().as_str().to_string())
+}
+
+- (bool)changeCurrentDirectoryPath:(id)path {
+    let path = ns_string::to_rust_string(env, path); // TODO: avoid copy
+    let path = GuestPath::new(&path);
+    match env.fs.change_working_directory(path) {
+        Ok(_) => true,
+        Err(()) => false
     }
 }
 
@@ -144,6 +171,35 @@ pub const CLASSES: ClassExports = objc_classes! {
             if !error.is_null() {
                 todo!(); // TODO: create an NSError if requested
             }
+            false
+        }
+    }
+}
+
+- (bool)createDirectoryAtPath:(id)path // NSString *
+  withIntermediateDirectories:(bool)with_intermediates
+                   attributes:(id)attributes // NSDictionary*
+                        error:(MutPtr<id>)error { // NSError**
+    assert_eq!(attributes, nil); // TODO
+    assert!(error.is_null());
+
+    let path_str = ns_string::to_rust_string(env, path); // TODO: avoid copy
+    let res = if with_intermediates {
+        env.fs.create_dir_all(GuestPath::new(&path_str))
+    } else {
+        env.fs.create_dir(GuestPath::new(&path_str))
+    };
+    match res {
+        Ok(()) => {
+            log_dbg!("createDirectoryAtPath {} => true", path_str);
+            true
+        }
+        Err(err) => {
+            log!(
+                "Warning: createDirectoryAtPath {} failed with {:?}, returning false",
+                path_str,
+                err,
+            );
             false
         }
     }

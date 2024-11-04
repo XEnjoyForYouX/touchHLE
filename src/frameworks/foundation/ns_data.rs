@@ -14,9 +14,9 @@ use crate::objc::{
 };
 use crate::{msg_class, Environment};
 
-struct NSDataHostObject {
-    bytes: MutVoidPtr,
-    length: NSUInteger,
+pub(super) struct NSDataHostObject {
+    pub(super) bytes: MutVoidPtr,
+    pub(super) length: NSUInteger,
 }
 impl HostObject for NSDataHostObject {}
 
@@ -42,7 +42,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     autorelease(env, new)
 }
 
-+ (id)dataWithBytes:(MutVoidPtr)bytes
++ (id)dataWithBytes:(ConstVoidPtr)bytes
              length:(NSUInteger)length {
     let new: id = msg![env; this alloc];
     let new: id = msg![env; new initWithBytes:bytes length:length];
@@ -56,9 +56,8 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 + (id)dataWithContentsOfMappedFile:(id)path {
-    log!("TODO [NSData dataWithContentsOfMappedFile:{:?}] uses [NSData dataWithContentsOfFile:] implementation instead of its own", path);
     let new: id = msg![env; this alloc];
-    let new: id = msg![env; new initWithContentsOfFile:path];
+    let new: id = msg![env; new initWithContentsOfMappedFile:path];
     autorelease(env, new)
 }
 
@@ -80,12 +79,12 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
-- (id)initWithBytes:(MutVoidPtr)bytes
+- (id)initWithBytes:(ConstVoidPtr)bytes
               length:(NSUInteger)length {
     let host_object = env.objc.borrow_mut::<NSDataHostObject>(this);
     assert!(host_object.bytes.is_null() && host_object.length == 0);
     let alloc = env.mem.alloc(length);
-    env.mem.memmove(alloc, bytes.cast_const(), length);
+    env.mem.memmove(alloc, bytes, length);
     host_object.bytes = alloc;
     host_object.length = length;
     this
@@ -120,6 +119,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     host_object.bytes = alloc;
     host_object.length = size;
     this
+}
+
+- (id)initWithContentsOfMappedFile:(id)path {
+    log_dbg!("[NSData initWithContentsOfMappedFile:] not using memory mapping");
+    msg![env; this initWithContentsOfFile:path]
 }
 
 // FIXME: writes should be atomic

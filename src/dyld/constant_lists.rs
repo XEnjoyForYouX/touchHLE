@@ -15,6 +15,7 @@ use crate::libc;
 pub const CONSTANT_LISTS: &[super::ConstantExports] = &[
     libc::ctype::CONSTANTS,
     libc::stdio::CONSTANTS,
+    libc::mach_init::CONSTANTS,
     core_animation::ca_layer::CONSTANTS,
     core_foundation::cf_allocator::CONSTANTS,
     core_foundation::cf_bundle::CONSTANTS,
@@ -30,5 +31,7 @@ pub const CONSTANT_LISTS: &[super::ConstantExports] = &[
     media_player::movie_player::CONSTANTS,
     media_player::music_player::CONSTANTS,
     opengles::eagl::CONSTANTS,
+    uikit::ui_application::CONSTANTS,
     uikit::ui_device::CONSTANTS,
+    uikit::ui_view::ui_window::CONSTANTS,
 ];

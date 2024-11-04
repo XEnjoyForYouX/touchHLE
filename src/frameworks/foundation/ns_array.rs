@@ -17,13 +17,17 @@ use crate::objc::{
 use crate::Environment;
 
 struct ObjectEnumeratorHostObject {
+    /// the enumerated collection, NSArray *
+    array: id,
+    /// an iterator
     iterator: std::vec::IntoIter<id>,
 }
 impl HostObject for ObjectEnumeratorHostObject {}
 
 /// Belongs to _touchHLE_NSArray
-struct ArrayHostObject {
-    array: Vec<id>,
+#[derive(Debug, Default)]
+pub(super) struct ArrayHostObject {
+    pub(super) array: Vec<id>,
 }
 impl HostObject for ArrayHostObject {}
 
@@ -43,6 +47,17 @@ pub const CLASSES: ClassExports = objc_classes! {
     // to have the normal behaviour. Unimplemented: call superclass alloc then.
     assert!(this == env.objc.get_known_class("NSArray", &mut env.mem));
     msg_class![env; _touchHLE_NSArray allocWithZone:zone]
+}
+
++ (id)array {
+    let array: id = msg![env; this new];
+    autorelease(env, array)
+}
+
++ (id)arrayWithArray:(id)other { // NSArray*
+    let array: id = msg![env; this alloc];
+    let array: id = msg![env; array initWithArray:other];
+    autorelease(env, array)
 }
 
 // These probably comes from some category related to plists.
@@ -109,12 +124,20 @@ pub const CLASSES: ClassExports = objc_classes! {
     NSNotFound as NSUInteger
 }
 
+- (id)firstObject {
+    let size: NSUInteger = msg![env; this count];
+    if size == 0 {
+        return nil;
+    }
+    msg![env; this objectAtIndex:0u32]
+}
+
 - (id)lastObject {
     let size: NSUInteger = msg![env; this count];
     if size == 0 {
         return nil;
     }
-    msg![env; this objectAtIndex: (size - 1)]
+    msg![env; this objectAtIndex:(size - 1)]
 }
 
 @end
@@ -135,6 +158,29 @@ pub const CLASSES: ClassExports = objc_classes! {
     // to have the normal behaviour. Unimplemented: call superclass alloc then.
     assert!(this == env.objc.get_known_class("NSMutableArray", &mut env.mem));
     msg_class![env; _touchHLE_NSMutableArray allocWithZone:zone]
+}
+
++ (id)arrayWithCapacity:(NSUInteger)capacity {
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithCapacity:capacity];
+    autorelease(env, new)
+}
+
++ (id)arrayWithArray:(id)array {
+    let new: id = msg![env; this alloc];
+    () = msg![env; new addObjectsFromArray:array];
+    autorelease(env, new)
+}
+
+- (())addObjectsFromArray:(id)other { // NSArray*
+    let enumerator: id = msg![env; other objectEnumerator];
+    loop {
+        let next: id = msg![env; enumerator nextObject];
+        if next == nil {
+            break;
+        }
+        () = msg![env; this addObject:next];
+    }
 }
 
 // NSCopying implementation
@@ -177,6 +223,21 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
+- (id)initWithArray:(id)array { // NSArray*
+    let mut objects = Vec::new();
+    let enumerator: id = msg![env; array objectEnumerator];
+    loop {
+        let next: id = msg![env; enumerator nextObject];
+        if next == nil {
+            break;
+        }
+        objects.push(next);
+        retain(env, next);
+    }
+    env.objc.borrow_mut::<ArrayHostObject>(this).array = objects;
+    this
+}
+
 - (())dealloc {
     let host_object: &mut ArrayHostObject = env.objc.borrow_mut(this);
     let array = std::mem::take(&mut host_object.array);
@@ -189,14 +250,7 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (id)objectEnumerator { // NSEnumerator*
-    let array_host_object: &mut ArrayHostObject = env.objc.borrow_mut(this);
-    let vec = array_host_object.array.to_vec();
-    let host_object = Box::new(ObjectEnumeratorHostObject {
-        iterator: vec.into_iter(),
-    });
-    let class = env.objc.get_known_class("_touchHLE_NSArray_ObjectEnumerator", &mut env.mem);
-    let enumerator = env.objc.alloc_object(class, host_object, &mut env.mem);
-    autorelease(env, enumerator)
+    object_enumerator_inner(env, this)
 }
 
 // NSFastEnumeration implementation
@@ -217,6 +271,20 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.borrow::<ArrayHostObject>(this).array[index as usize]
 }
 
+- (id)description {
+    build_description(env, this)
+}
+
+@end
+
+// Special variant for use by CFArray with NULL callbacks: objects aren't
+// necessarily Objective-C objects and won't be retained/released.
+@implementation _touchHLE_NSArray_non_retaining: _touchHLE_NSArray
+
+- (())dealloc {
+    env.objc.dealloc_object(this, &mut env.mem)
+}
+
 @end
 
 @implementation _touchHLE_NSArray_ObjectEnumerator: NSEnumerator
@@ -224,6 +292,12 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)nextObject {
     let host_obj = env.objc.borrow_mut::<ObjectEnumeratorHostObject>(this);
     host_obj.iterator.next().map_or(nil, |o| o)
+}
+
+- (())dealloc {
+    let host_obj = env.objc.borrow::<ObjectEnumeratorHostObject>(this);
+    release(env, host_obj.array);
+    env.objc.dealloc_object(this, &mut env.mem)
 }
 
 @end
@@ -248,6 +322,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
+- (id)initWithCapacity:(NSUInteger)_capacity {
+    // TODO: capacity
+    msg![env; this init]
+}
+
 - (())dealloc {
     let host_object: &mut ArrayHostObject = env.objc.borrow_mut(this);
     let array = std::mem::take(&mut host_object.array);
@@ -259,6 +338,9 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.dealloc_object(this, &mut env.mem)
 }
 
+- (id)objectEnumerator { // NSEnumerator*
+    object_enumerator_inner(env, this)
+}
 
 // TODO: init methods etc
 
@@ -273,6 +355,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)objectAtIndex:(NSUInteger)index {
     // TODO: throw real exception rather than panic if out-of-bounds?
     env.objc.borrow::<ArrayHostObject>(this).array[index as usize]
+}
+
+- (id)description {
+    build_description(env, this)
 }
 
 // TODO: more mutation methods
@@ -320,6 +406,10 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.borrow_mut::<ArrayHostObject>(this).array.remove(index as usize);
 }
 
+- (())removeLastObject {
+    env.objc.borrow_mut::<ArrayHostObject>(this).array.pop().unwrap();
+}
+
 @end
 
 };
@@ -331,4 +421,46 @@ pub fn from_vec(env: &mut Environment, objects: Vec<id>) -> id {
     let array: id = msg_class![env; NSArray alloc];
     env.objc.borrow_mut::<ArrayHostObject>(array).array = objects;
     array
+}
+
+/// A helper to build a description NSString
+/// for a NSArray or a NSMutableArray.
+fn build_description(env: &mut Environment, arr: id) -> id {
+    // According to docs, this description should be formatted as property list.
+    // But by the same docs, it's meant to be used for debugging purposes only.
+    let desc: id = msg_class![env; NSMutableString new];
+    let prefix: id = ns_string::from_rust_string(env, "(\n".to_string());
+    () = msg![env; desc appendString:prefix];
+    release(env, prefix);
+    let values: Vec<id> = env.objc.borrow_mut::<ArrayHostObject>(arr).array.clone();
+    for value in values {
+        let value_desc: id = msg![env; value description];
+        // TODO: respect nesting and padding
+        let format = format!("\t{},\n", ns_string::to_rust_string(env, value_desc));
+        let format = ns_string::from_rust_string(env, format);
+        () = msg![env; desc appendString:format];
+        release(env, format);
+    }
+    let suffix: id = ns_string::from_rust_string(env, ")".to_string());
+    () = msg![env; desc appendString:suffix];
+    release(env, suffix);
+    let desc_imm = msg![env; desc copy];
+    release(env, desc);
+    autorelease(env, desc_imm)
+}
+
+/// A shared objectEnumerator helper method.
+fn object_enumerator_inner(env: &mut Environment, arr: id) -> id {
+    let array_host_object: &mut ArrayHostObject = env.objc.borrow_mut(arr);
+    let vec = array_host_object.array.to_vec();
+    let host_object = Box::new(ObjectEnumeratorHostObject {
+        array: arr,
+        iterator: vec.into_iter(),
+    });
+    retain(env, arr);
+    let class = env
+        .objc
+        .get_known_class("_touchHLE_NSArray_ObjectEnumerator", &mut env.mem);
+    let enumerator = env.objc.alloc_object(class, host_object, &mut env.mem);
+    autorelease(env, enumerator)
 }

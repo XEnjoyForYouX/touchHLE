@@ -105,7 +105,9 @@ pub trait GLES {
     unsafe fn Lightfv(&mut self, light: GLenum, pname: GLenum, params: *const GLfloat);
     unsafe fn Lightxv(&mut self, light: GLenum, pname: GLenum, params: *const GLfixed);
     unsafe fn LightModelf(&mut self, pname: GLenum, param: GLfloat);
+    unsafe fn LightModelx(&mut self, pname: GLenum, param: GLfixed);
     unsafe fn LightModelfv(&mut self, pname: GLenum, params: *const GLfloat);
+    unsafe fn LightModelxv(&mut self, pname: GLenum, params: *const GLfixed);
     unsafe fn Materialf(&mut self, face: GLenum, pname: GLenum, param: GLfloat);
     unsafe fn Materialx(&mut self, face: GLenum, pname: GLenum, param: GLfixed);
     unsafe fn Materialfv(&mut self, face: GLenum, pname: GLenum, params: *const GLfloat);
@@ -374,4 +376,7 @@ pub trait GLES {
     unsafe fn DeleteFramebuffersOES(&mut self, n: GLsizei, framebuffers: *const GLuint);
     unsafe fn DeleteRenderbuffersOES(&mut self, n: GLsizei, renderbuffers: *const GLuint);
     unsafe fn GenerateMipmapOES(&mut self, target: GLenum);
+    unsafe fn GetBufferParameteriv(&mut self, target: GLenum, pname: GLenum, params: *mut GLint);
+    unsafe fn MapBufferOES(&mut self, target: GLenum, access: GLenum) -> *mut GLvoid;
+    unsafe fn UnmapBufferOES(&mut self, target: GLenum) -> GLboolean;
 }

@@ -25,18 +25,30 @@ Compatibility:
   - [Asphalt 4: Elite Racing](https://appdb.touchhle.org/apps/96) (@ciciplusplus)
   - [Prince of Persia: Warrior Within](https://appdb.touchhle.org/apps/127) (@ciciplusplus)
   - [Resident Evil 4: Mobile Edition](https://appdb.touchhle.org/apps/91) (@alborrajo)
+  - [Command & Conquer: Red Alert](https://appdb.touchhle.org/apps/404) (@ciciplusplus)
+  - [SimCity](https://appdb.touchhle.org/apps/250) (@ciciplusplus)
+  - [Asphalt 5](https://appdb.touchhle.org/apps/411) (@ciciplusplus, @hikari-no-yume)
+  - [Cut the Rope](https://appdb.touchhle.org/apps/124) (@ciciplusplus)
 - API support improvements:
-  - Various small contributions. (@hikari-no-yume, @alborrajo, @ciciplusplus, @atasro2)
+  - Various small contributions. (@hikari-no-yume, @alborrajo, @ciciplusplus, @atasro2, @LennyKappa)
   - UITextField now supports real text input with a keyboard. On Windows/macOS physical keyboard is used, on Android it's done via a system soft keyboard. (@ciciplusplus)
+  - UIScrollView and UITextView partial implementations. (@Skryptonyte, @ciciplusplus)
 
 Usability:
 
 - Added default options for Earthworm Jim and improved default options for Crash Bandicoot Nitro Kart 3D. (@celerizer)
 - The app picker now has a “Quick options” feature. This provides a quicker and easier way to set some common options. (@hikari-no-yume)
+- App icons in the app picker are now sorted by the display name of the app, case-insensitively. (@hikari-no-yume)
+- The accelerometer (tilt controls) can now be simulated using a mouse, instead of a game controller or real accelerometer. Simply hold down the right mouse button and move the mouse cursor. (@alborrajo)
+- Default options for various games. (@nighto)
 
 Quality:
 
 - Fix problem with non-working accelerometer on some Android phones. (@Oscar1640)
+
+Other:
+
+- MP3 decoding now uses Symphonia rather than dr\_mp3. We do not expect this to affect compatibility. (@LennyKappa)
 
 ## v0.2.2 (2024-04-01)
 

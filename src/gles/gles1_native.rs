@@ -224,8 +224,14 @@ impl GLES for GLES1Native {
     unsafe fn LightModelf(&mut self, pname: GLenum, param: GLfloat) {
         gles11::LightModelf(pname, param)
     }
+    unsafe fn LightModelx(&mut self, pname: GLenum, param: GLfixed) {
+        gles11::LightModelx(pname, param)
+    }
     unsafe fn LightModelfv(&mut self, pname: GLenum, params: *const GLfloat) {
         gles11::LightModelfv(pname, params)
+    }
+    unsafe fn LightModelxv(&mut self, pname: GLenum, params: *const GLfixed) {
+        gles11::LightModelxv(pname, params)
     }
     unsafe fn Materialf(&mut self, face: GLenum, pname: GLenum, param: GLfloat) {
         gles11::Materialf(face, pname, param)
@@ -715,5 +721,14 @@ impl GLES for GLES1Native {
     }
     unsafe fn GenerateMipmapOES(&mut self, target: GLenum) {
         gles11::GenerateMipmapOES(target)
+    }
+    unsafe fn GetBufferParameteriv(&mut self, target: GLenum, pname: GLenum, params: *mut GLint) {
+        gles11::GetBufferParameteriv(target, pname, params)
+    }
+    unsafe fn MapBufferOES(&mut self, target: GLenum, access: GLenum) -> *mut GLvoid {
+        gles11::MapBufferOES(target, access)
+    }
+    unsafe fn UnmapBufferOES(&mut self, target: GLenum) -> GLboolean {
+        gles11::UnmapBufferOES(target)
     }
 }
